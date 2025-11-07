@@ -1,0 +1,27 @@
+FROM apache/airflow:2.8.3
+
+# --- Installer Java 17 ---
+USER root
+RUN apt-get update && \
+    apt-get install -y openjdk-17-jdk curl wget && \
+    rm -rf /var/lib/apt/lists/*
+
+# --- Variables d'environnement pour Java ---
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH=$JAVA_HOME/bin:$PATH
+
+# --- Config Hadoop pour MinIO ---
+RUN mkdir -p /opt/airflow/hadoop_conf
+COPY core-site.xml /opt/airflow/hadoop_conf/core-site.xml
+ENV HADOOP_CONF_DIR=/opt/airflow/hadoop_conf
+
+# --- Copier les jars Spark et dépendances ---
+COPY jars/ /opt/airflow/jars/
+
+# --- Repasser en utilisateur airflow ---
+USER airflow
+
+# --- Installer dépendances Python ---
+COPY requirements.txt /requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --default-timeout=1000 -r /requirements.txt
