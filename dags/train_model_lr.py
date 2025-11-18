@@ -1,6 +1,6 @@
 import psycopg2
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
 import pickle
 import sys
 from datetime import datetime
@@ -16,7 +16,6 @@ DB_PARAMS = {
 COUNTRY = "NER"
 
 try:
-    # Connexion à la base
     conn = psycopg2.connect(**DB_PARAMS)
     cursor = conn.cursor()
     print("[INFO] Connexion PostgreSQL OK")
@@ -44,12 +43,12 @@ try:
         y = sub["datavalue"].values
 
         try:
-            model = RandomForestRegressor(n_estimators=100)
+            model = LinearRegression()
             model.fit(X, y)
             models[scode] = model
-            print(f"[INFO] Modèle RF entraîné pour {scode}")
+            print(f"[INFO] Modèle LR entraîné pour {scode}")
         except Exception as e:
-            print(f"[ERROR] Erreur entraînement RF pour {scode}: {e}")
+            print(f"[ERROR] Erreur entraînement LR pour {scode}: {e}")
             continue
 
     # Sauvegarder les modèles dans PostgreSQL
@@ -61,18 +60,18 @@ try:
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (model_name, model_type, country_iso)
                 DO UPDATE SET model_binary = EXCLUDED.model_binary;
-            """, (scode, "RF", COUNTRY, binary))
-            print(f"[INFO] Modèle {scode} inséré/mis à jour en DB")
+            """, (scode, "LR", COUNTRY, binary))
+            print(f"[INFO] Modèle LR {scode} inséré/mis à jour en DB")
         except Exception as e:
             print(f"[ERROR] Erreur insertion DB pour {scode}: {e}")
             continue
 
     conn.commit()
-    print("[INFO] Tous les modèles sauvegardés avec succès")
+    print("[INFO] Tous les modèles LR sauvegardés avec succès")
 
 except Exception as e:
     print(f"[FATAL] Erreur générale : {e}")
-    sys.exit(1)  # Exit 1 seulement si c'est vraiment fatal
+    sys.exit(1)
 
 finally:
     if 'cursor' in locals():
