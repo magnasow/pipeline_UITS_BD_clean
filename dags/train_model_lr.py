@@ -5,6 +5,7 @@ import pickle
 import sys
 from datetime import datetime
 
+# Paramètres de connexion PostgreSQL
 DB_PARAMS = {
     "dbname": "mydb",
     "user": "admin",
@@ -16,11 +17,12 @@ DB_PARAMS = {
 COUNTRY = "NER"
 
 try:
+    # Connexion à la base PostgreSQL
     conn = psycopg2.connect(**DB_PARAMS)
     cursor = conn.cursor()
     print("[INFO] Connexion PostgreSQL OK")
 
-    # Charger les données
+    # Charger les données nécessaires à l'entraînement des modèles
     query = """
     SELECT seriescode, datayear, datavalue
     FROM indicateurs_nettoyes
@@ -32,17 +34,21 @@ try:
 
     models = {}
 
+    # Entraîner un modèle par indicateur (seriescode)
     for scode in df["seriescode"].unique():
         sub = df[df["seriescode"] == scode]
 
+        # Nécessite au moins 3 points de données pour faire une régression
         if len(sub) < 3:
             print(f"[WARNING] Series {scode} ignorée (moins de 3 points)")
             continue
 
+        # Variables d'entrée (année) et cible (valeur)
         X = sub["datayear"].values.reshape(-1, 1)
         y = sub["datavalue"].values
 
         try:
+            # Création et entraînement du modèle de régression linéaire
             model = LinearRegression()
             model.fit(X, y)
             models[scode] = model
@@ -51,10 +57,10 @@ try:
             print(f"[ERROR] Erreur entraînement LR pour {scode}: {e}")
             continue
 
-    # Sauvegarder les modèles dans PostgreSQL
+    # Sauvegarde des modèles entraînés dans PostgreSQL
     for scode, model in models.items():
         try:
-            binary = pickle.dumps(model)
+            binary = pickle.dumps(model)  # Sérialisation du modèle en binaire
             cursor.execute("""
                 INSERT INTO ml_models (model_name, model_type, country_iso, model_binary)
                 VALUES (%s, %s, %s, %s)
@@ -74,6 +80,7 @@ except Exception as e:
     sys.exit(1)
 
 finally:
+    # Fermeture propre des ressources
     if 'cursor' in locals():
         cursor.close()
     if 'conn' in locals():

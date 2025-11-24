@@ -3,6 +3,8 @@ import pickle
 import sys
 from datetime import datetime
 
+
+# Paramètres PostgreSQL
 DB_PARAMS = {
     "dbname": "mydb",
     "user": "admin",
@@ -17,11 +19,12 @@ PRED_YEARS = [2026, 2027, 2028, 2029, 2030]
 def main():
     try:
         print("[INFO] Connexion à PostgreSQL...")
+        # Connexion DB
         conn = psycopg2.connect(**DB_PARAMS)
         cursor = conn.cursor()
         print("[INFO] Connexion réussie")
 
-        # Charger les modèles RF
+        # Récupérer tous les modèles Random Forest du pays
         cursor.execute("""
             SELECT model_name, model_binary
             FROM ml_models
@@ -34,8 +37,10 @@ def main():
             print("[WARNING] Aucun modèle RF trouvé. Vérifiez la table ml_models.")
             return
 
+        # Parcours des modèles
         for model_name, binary in models:
             try:
+                # Charger le modèle depuis son binaire
                 model = pickle.loads(binary)
             except Exception as e:
                 print(f"[ERROR] Impossible de charger le modèle {model_name}: {e}")
@@ -43,8 +48,10 @@ def main():
 
             for year in PRED_YEARS:
                 try:
+                    # Générer des prédictions pour chaque année
                     pred = float(model.predict([[year]])[0])
                     print(f"[INFO] Prédiction {model_name} pour {year}: {pred}")
+                    # Stocker ou mettre à jour en base
                     cursor.execute("""
                         INSERT INTO ml_predictions (
                             model_name, model_type, country_iso, seriescode, year, predicted_value, created_at
@@ -60,7 +67,7 @@ def main():
                     print(f"[ERROR] Impossible d'insérer la prédiction {model_name} pour {year}: {e}")
                     continue
 
-        conn.commit()
+        conn.commit()   # Valider les écritures
         print("[INFO] Toutes les prédictions RF ont été sauvegardées avec succès")
 
     except Exception as e:
