@@ -1,10 +1,20 @@
+# ---------------------------------------------------------
 # Importation des librairies nécessaires
-import psycopg2
-import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-import pickle
-import sys
-# Paramètres de connexion à la base PostgreSQL
+# ---------------------------------------------------------
+
+import psycopg2                         # Pour se connecter à PostgreSQL
+import pandas as pd                    # Pour manipuler les données
+from sklearn.ensemble import RandomForestRegressor   # Modèle Random Forest
+from sklearn.preprocessing import OneHotEncoder      
+from sklearn.compose import ColumnTransformer        
+from sklearn.pipeline import Pipeline                
+import pickle                                        
+import sys                                           
+
+# ---------------------------------------------------------
+# Paramètres PostgreSQL pour la connexion
+# ---------------------------------------------------------
+
 DB_PARAMS = {
     "dbname": "mydb",
     "user": "admin",
@@ -13,83 +23,130 @@ DB_PARAMS = {
     "port": 5432
 }
 
-
-# Code pays dont on veut entraîner les modèles
+# Pays étudié (Niger)
 COUNTRY = "NER"
 
 try:
-    # Connexion à PostgreSQL
+    # ---------------------------------------------------------
+    # Connexion à la base PostgreSQL
+    # ---------------------------------------------------------
     conn = psycopg2.connect(**DB_PARAMS)
     cursor = conn.cursor()
     print("[INFO] Connexion PostgreSQL OK")
 
-    # Requête SQL : sélectionner les données utiles
+    # ---------------------------------------------------------
+    # Extraction des indicateurs nettoyés depuis PostgreSQL
+    # ---------------------------------------------------------
     query = """
-    SELECT seriescode, datayear, datavalue
+    SELECT seriescode, seriesid, datayear, datavalue, datasource, region
     FROM indicateurs_nettoyes
     WHERE entityiso = %s
     ORDER BY datayear;
     """
-    df = pd.read_sql(query, conn, params=(COUNTRY,))
-    print(f"[INFO] Données chargées : {df.shape[0]} lignes, {df['seriescode'].nunique()} series codes")
 
-    # Dictionnaire pour stocker chaque modèle entraîné
+    df = pd.read_sql(query, conn, params=(COUNTRY,))
+    print(f"[INFO] Données chargées : {df.shape[0]} lignes, {df['seriescode'].nunique()} indicateurs")
+
+    # Dictionnaire contenant le modèle pour chaque seriescode
     models = {}
 
+    # ---------------------------------------------------------
+    # Boucle d’entraînement : 1 modèle Random Forest par indicateur
+    # ---------------------------------------------------------
     for scode in df["seriescode"].unique():
-        sub = df[df["seriescode"] == scode]
 
-        if len(sub) < 3:
-            print(f"[WARNING] Series {scode} ignorée (moins de 3 points)")
+        # Sélection des données propres à l’indicateur
+        sub = df[df["seriescode"] == scode].dropna(subset=["datavalue", "datayear"])
+
+        # Vérification : il faut au moins 5 années pour entraîner un modèle
+        if len(sub) < 5:
+            print(f"[WARNING] Series {scode} ignorée (moins de 5 points)")
             continue
-
-        # X = années, reshape pour correspondre au format du modèle
-        X = sub["datayear"].values.reshape(-1, 1)
-        y = sub["datavalue"].values  # y = valeurs à prédire
 
         try:
-            # Création du modèle Random Forest
-            model = RandomForestRegressor(n_estimators=100)
+            # Séries ID converti en string pour OneHotEncoder
+            sub["seriesid"] = sub["seriesid"].astype(str)
 
-            # Entraînement
+            # Définition des variables explicatives
+            features = ["datayear", "datasource", "region", "seriesid"]
+            X = sub[features]
+
+            # Variable cible
+            y = sub["datavalue"]
+
+            # ---------------------------------------------------------
+            # Prétraitement : OneHotEncoder pour les variables catégorielles
+            # ---------------------------------------------------------
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ("cat", OneHotEncoder(handle_unknown="ignore"),
+                     ["datasource", "region", "seriesid"]),
+                    ("num", "passthrough", ["datayear"])
+                ]
+            )
+
+            # ---------------------------------------------------------
+            # Pipeline complet Random Forest :
+            #   1) Prétraitement
+            #   2) RandomForestRegressor
+            # ---------------------------------------------------------
+            model = Pipeline([
+                ("preprocessing", preprocessor),
+                ("regressor", RandomForestRegressor(
+                    n_estimators=100,       # Nombre d'arbres
+                    random_state=42,        # Reproductibilité
+                ))
+            ])
+
+            # Entraînement du modèle
             model.fit(X, y)
 
-            # Sauvegarde du modèle dans le dictionnaire
+            # Stockage du modèle entraîné
             models[scode] = model
+
             print(f"[INFO] Modèle RF entraîné pour {scode}")
+
         except Exception as e:
-            print(f"[ERROR] Erreur entraînement RF pour {scode}: {e}")
+            print(f"[ERROR] Erreur modèle {scode} : {e}")
             continue
 
-    # Sauvegarde de chaque modèle dans la base PostgreSQL
+    # ---------------------------------------------------------
+    # Sauvegarde des modèles dans PostgreSQL
+    # Chaque modèle est sérialisé avec pickle
+    # ---------------------------------------------------------
     for scode, model in models.items():
         try:
             # Conversion du modèle en binaire
-            binary = pickle.dumps(model)
+            binary_model = pickle.dumps(model)
 
-            # Insertion ou mise à jour dans la table ml_models
+            # Insert ou Update dans la table ml_models
             cursor.execute("""
                 INSERT INTO ml_models (model_name, model_type, country_iso, model_binary)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (model_name, model_type, country_iso)
                 DO UPDATE SET model_binary = EXCLUDED.model_binary;
-            """, (scode, "RF", COUNTRY, binary))
-            print(f"[INFO] Modèle RF {scode} inséré/mis à jour en DB")
-        except Exception as e:
-            print(f"[ERROR] Erreur insertion DB pour {scode}: {e}")
-            continue
+            """, (scode, "RF_MULTI", COUNTRY, binary_model))
 
-    # Validation des opérations
+            print(f"[INFO] Modèle RF {scode} sauvegardé")
+
+        except Exception as e:
+            print(f"[ERROR] Sauvegarde DB {scode} : {e}")
+
+    # Validation
     conn.commit()
     print("[INFO] Tous les modèles RF sauvegardés avec succès")
 
+# ---------------------------------------------------------
+# Gestion d’erreur globale
+# ---------------------------------------------------------
 except Exception as e:
     print(f"[FATAL] Erreur générale : {e}")
     sys.exit(1)
 
+# ---------------------------------------------------------
+# Fermeture de la connexion PostgreSQL
+# ---------------------------------------------------------
 finally:
-    if 'cursor' in locals():
-        cursor.close()
-    if 'conn' in locals():
-        conn.close()
+    if 'cursor' in locals(): cursor.close()
+    if 'conn' in locals(): conn.close()
     print("[INFO] Connexion PostgreSQL fermée")
