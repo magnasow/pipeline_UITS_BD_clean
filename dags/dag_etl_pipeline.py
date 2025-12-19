@@ -143,3 +143,4 @@ with DAG(
 
     predict_lr >> refresh_mv_niger
     predict_rf >> refresh_mv_niger
+    
