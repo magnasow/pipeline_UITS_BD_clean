@@ -1,117 +1,76 @@
 # ---------------------------------------------------------
-# Importation des librairies nécessaires
+# Prédiction 2026–2030 Random Forest
+# Inputs : datevaleur_ambs, datevaleur_pcbmnt
+# Target : prediction_datevaleur_uiti
 # ---------------------------------------------------------
 
-import psycopg2                 # Connexion à PostgreSQL
-import pickle                   # Chargement des modèles sauvegardés
-import pandas as pd             # Manipulation des données tabulaires
+import psycopg2
+import pandas as pd
+import pickle
+import sys
 
-# ---------------------------------------------------------
-# Paramètres de connexion à PostgreSQL
-# ---------------------------------------------------------
+COUNTRY = sys.argv[1] if len(sys.argv) > 1 else "NER"
 
-DB_PARAMS = {
-    "dbname": "mydb",
-    "user": "admin",
-    "password": "admin123",
-    "host": "postgres",
-    "port": 5432
-}
-
-COUNTRY = "NER"  # Pays étudié pour les prédictions
-PRED_YEARS = [2026, 2027, 2028, 2029, 2030]  # Années à prédire
-
-# ---------------------------------------------------------
-# Connexion à la base de données
-# ---------------------------------------------------------
-conn = psycopg2.connect(**DB_PARAMS)
-cursor = conn.cursor()
-print("[INFO] Connexion PostgreSQL OK")
-
-# ---------------------------------------------------------
-# Chargement des modèles Random Forest (RF_MULTI)
-# Ces modèles ont préalablement été entraînés et stockés
-# dans la table ml_models.
-# ---------------------------------------------------------
-cursor.execute("""
-SELECT model_name, model_binary
-FROM ml_models
-WHERE model_type = 'RF_MULTI' AND country_iso = %s;
-""", (COUNTRY,))
-
-models = cursor.fetchall()
-print(f"[INFO] {len(models)} modèles RF chargés")
-
-# ---------------------------------------------------------
-# Chargement des métadonnées nécessaires pour la prédiction
-# (datasource, région, seriesid)
-# ---------------------------------------------------------
-cursor.execute("""
-SELECT DISTINCT seriescode, datasource, region, seriesid
-FROM indicateurs_nettoyes
-WHERE entityiso = %s;
-""", (COUNTRY,))
-
-meta = pd.DataFrame(
-    cursor.fetchall(),
-    columns=["seriescode", "datasource", "region", "seriesid"]
+conn = psycopg2.connect(
+    dbname="mydb",
+    user="admin",
+    password="admin123",
+    host="postgres",
+    port=5432
 )
-print("[INFO] Métadonnées récupérées")
+cursor = conn.cursor()
 
-# ---------------------------------------------------------
-# Génération des prédictions pour toutes les séries
-# ---------------------------------------------------------
-for model_name, binary in models:
+# Charger le modèle RF
+cursor.execute("""
+SELECT model_object FROM ml_models
+WHERE model_name = 'rf_connectivity';
+""")
+rf_model = pickle.loads(cursor.fetchone()[0])
 
-    # Réactivation du modèle ML à partir du binaire stocké
-    model = pickle.loads(binary)
+# Dernières valeurs connues pour le pays
+query = """
+SELECT datevaleur_ambs, datevaleur_pcbmnt
+FROM indicateurs_connectivite_etude
+WHERE entite_iso = %s
+  AND datevaleur_ambs IS NOT NULL
+  AND datevaleur_pcbmnt IS NOT NULL
+ORDER BY dateyear DESC
+LIMIT 1;
+"""
+df_last = pd.read_sql(query, conn, params=(COUNTRY,))
+if df_last.empty:
+    raise ValueError(f"Aucune donnée pour le pays {COUNTRY}")
 
-    # Récupération des métadonnées associées à cet indicateur
-    info = meta[meta["seriescode"] == model_name]
+ambs = df_last.loc[0, "datevaleur_ambs"]
+pcbmnt = df_last.loc[0, "datevaleur_pcbmnt"]
 
-    # Si aucune info → on ignore
-    if info.empty:
-        print(f"[WARNING] Pas de métadonnées pour {model_name}, ignoré.")
-        continue
+years = list(range(2026, 2031))
+X_future = pd.DataFrame({
+    "dateyear": years,
+    "datevaleur_ambs": [ambs]*len(years),
+    "datevaleur_pcbmnt": [pcbmnt]*len(years)
+})
 
-    datasource = info.iloc[0]["datasource"]
-    region = info.iloc[0]["region"]
-    seriesid = str(info.iloc[0]["seriesid"])  # Conversion en string pour compatibilité
+predictions = rf_model.predict(X_future)
+X_future["prediction_datevaleur_uiti"] = predictions
+X_future["entite_iso"] = COUNTRY
+X_future["modele"] = "RandomForest"
 
-    # -----------------------------------------------------
-    # Prédiction sur toutes les années futures définies
-    # -----------------------------------------------------
-    for year in PRED_YEARS:
+# Insertion dans la table predictions
+for _, row in X_future.iterrows():
+    cursor.execute("""
+    INSERT INTO indicateurs_connectivite_predictions
+    (entite_iso, dateyear, datevaleur_ambs, datevaleur_pcbmnt, prediction_datevaleur_uiti, modele)
+    VALUES (%s, %s, %s, %s, %s, %s)
+    ON CONFLICT (entite_iso, dateyear, modele)
+    DO UPDATE SET
+        datevaleur_ambs = EXCLUDED.datevaleur_ambs,
+        datevaleur_pcbmnt = EXCLUDED.datevaleur_pcbmnt,
+        prediction_datevaleur_uiti = EXCLUDED.prediction_datevaleur_uiti,
+        created_at = CURRENT_TIMESTAMP;
+    """, (row.entite_iso, row.dateyear, row.datevaleur_ambs, row.datevaleur_pcbmnt, row.prediction_datevaleur_uiti, row.modele))
 
-        # Création d’une ligne d’entrée conforme au modèle RF
-        input_row = pd.DataFrame([{
-            "datayear": year,
-            "datasource": datasource,
-            "region": region,
-            "seriesid": seriesid
-        }])
-
-        # Génération de la prédiction
-        pred = float(model.predict(input_row)[0])
-
-        # Insertion ou mise à jour de la prédiction dans PostgreSQL
-        cursor.execute("""
-        INSERT INTO ml_predictions (
-            model_name, model_type, country_iso,
-            seriescode, year, predicted_value, created_at
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, NOW())
-        ON CONFLICT (seriescode, year, country_iso, model_type)
-        DO UPDATE SET predicted_value = EXCLUDED.predicted_value,
-                      created_at = NOW();
-        """, (model_name, "RF_MULTI", COUNTRY, model_name, year, pred))
-
-        print(f"[OK] {model_name} → {year} = {pred}")
-
-# ---------------------------------------------------------
-# Validation et fermeture de la connexion SQL
-# ---------------------------------------------------------
 conn.commit()
 cursor.close()
 conn.close()
-print("[INFO] Prédictions RF insérées avec succès")
+print("[OK] Prédictions RF insérées pour 2026–2030")

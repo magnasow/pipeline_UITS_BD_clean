@@ -132,15 +132,15 @@ with DAG(
 
     # Dépendances:
     # après spark_etl_cleaning on rafraîchit les vues analytiques
-    spark_etl_cleaning >> [refresh_mv_main, refresh_mv_comparaison]
+    #spark_etl_cleaning >> [refresh_mv_main, refresh_mv_comparaison]
 
-    spark_etl_cleaning >> train_lr
-    spark_etl_cleaning >> train_rf
+    #spark_etl_cleaning >> train_lr
+    #spark_etl_cleaning >> train_rf
 
     # Chaînage interne des modèles
-    train_lr >> predict_lr
-    train_rf >> predict_rf
+    #train_lr >> predict_lr
+    #train_rf >> predict_rf
 
-    predict_lr >> refresh_mv_niger
-    predict_rf >> refresh_mv_niger
+    #predict_lr >> refresh_mv_niger
+    #predict_rf >> refresh_mv_niger
     
