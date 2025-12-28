@@ -1,9 +1,3 @@
-# ---------------------------------------------------------
-# Entraînement Linear Regression
-# Inputs : dateyear, datevaleur_ambs, datevaleur_pcbmnt
-# Target : datevaleur_uiti
-# ---------------------------------------------------------
-
 import psycopg2
 import pandas as pd
 import pickle
@@ -19,29 +13,35 @@ conn = psycopg2.connect(
 )
 
 query = """
-SELECT dateyear, datevaleur_ambs, datevaleur_pcbmnt, datevaleur_uiti
+SELECT dateyear,
+       datevaleur_ambs,
+       datevaleur_pcbmnt,
+       datevaleur_iuti
 FROM indicateurs_connectivite_etude
 WHERE datevaleur_ambs IS NOT NULL
   AND datevaleur_pcbmnt IS NOT NULL
-  AND datevaleur_uiti IS NOT NULL;
+  AND datevaleur_iuti IS NOT NULL;
 """
+
 df = pd.read_sql(query, conn)
 
 X = df[["dateyear", "datevaleur_ambs", "datevaleur_pcbmnt"]]
-y = df["datevaleur_uiti"]
+y = df["datevaleur_iuti"]
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+X_train, _, y_train, _ = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
 
-lr_model = LinearRegression()
-lr_model.fit(X_train, y_train)
+model = LinearRegression()
+model.fit(X_train, y_train)
 
-# Sérialisation
-model_binary = pickle.dumps(lr_model)
+model_binary = pickle.dumps(model)
+
 cursor = conn.cursor()
 cursor.execute("""
 INSERT INTO ml_models (model_name, model_type, model_object)
 VALUES (%s, %s, %s)
-ON CONFLICT (model_name)
+ON CONFLICT (model_name, model_type)
 DO UPDATE SET
     model_object = EXCLUDED.model_object,
     trained_at = CURRENT_TIMESTAMP;
@@ -50,4 +50,5 @@ DO UPDATE SET
 conn.commit()
 cursor.close()
 conn.close()
-print("[OK] Modèle LR entraîné et sauvegardé")
+
+print("[OK] Modèle Linear Regression entraîné et sauvegardé")

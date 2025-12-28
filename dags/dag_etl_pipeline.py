@@ -73,54 +73,74 @@ with DAG(
     def run_train_model_lr():
         result = subprocess.run(
             ["python3", "/opt/airflow/dags/train_model_lr.py"],
-            capture_output=True, text=True, check=True
+            capture_output=True,
+            text=True
         )
-        return result.stdout
+
+        print("===== STDOUT train_model_lr =====")
+        print(result.stdout)
+
+        print("===== STDERR train_model_lr =====")
+        print(result.stderr)
+
+        if result.returncode != 0:
+            raise Exception("Erreur dans train_model_lr.py")
+    
 
     def run_predict_model_lr():
         result = subprocess.run(
             ["python3", "/opt/airflow/dags/predict_model_lr.py"],
-            capture_output=True, text=True, check=True
+            capture_output=True,
+            text=True
         )
-        return result.stdout
+        print(result.stdout)
+        print(result.stderr)
+        if result.returncode != 0:
+            raise Exception("Erreur predict_model_lr")
+
 
     def run_train_model_rf():
         result = subprocess.run(
             ["python3", "/opt/airflow/dags/train_model_rf.py"],
-            capture_output=True, text=True, check=True
+            capture_output=True,
+            text=True
         )
-        return result.stdout
+        print(result.stdout)
+        print(result.stderr)
+        if result.returncode != 0:
+            raise Exception("Erreur train_model_rf")
+
 
     def run_predict_model_rf():
         result = subprocess.run(
             ["python3", "/opt/airflow/dags/predict_model_rf.py"],
-            capture_output=True, text=True, check=True
+            capture_output=True,
+            text=True
         )
-        return result.stdout
-
+        print(result.stdout)
+        print(result.stderr)
+        if result.returncode != 0:
+            raise Exception("Erreur predict_model_rf")
 
     # entraînement LR
     train_lr = PythonOperator(
         task_id="train_model_lr",
-        python_callable=lambda: subprocess.run(["python3", "/opt/airflow/dags/train_model_lr.py"], check=True), do_xcom_push=False,  # <-- ici
+        python_callable=run_train_model_lr,
     )
-
     # prédiction LR
     predict_lr = PythonOperator(
         task_id="predict_model_lr",
-        python_callable=lambda: subprocess.run(["python3", "/opt/airflow/dags/predict_model_lr.py"], check=True), do_xcom_push=False,  # <-- ici
+        python_callable=run_predict_model_lr,
     )
-
     # entraînement RF
     train_rf = PythonOperator(
         task_id="train_model_rf",
-        python_callable=lambda: subprocess.run(["python3", "/opt/airflow/dags/train_model_rf.py"], check=True), do_xcom_push=False,  # <-- ici
+        python_callable=run_train_model_rf,
     )
-
     # prédiction RF
     predict_rf = PythonOperator(
         task_id="predict_model_rf",
-        python_callable=lambda: subprocess.run(["python3", "/opt/airflow/dags/predict_model_rf.py"], check=True), do_xcom_push=False,  # <-- ici
+        python_callable=run_predict_model_rf,
     )
 
     # rafraîchir la vue matérialisée spécifique Niger
@@ -132,15 +152,15 @@ with DAG(
 
     # Dépendances:
     # après spark_etl_cleaning on rafraîchit les vues analytiques
-    #spark_etl_cleaning >> [refresh_mv_main, refresh_mv_comparaison]
+    spark_etl_cleaning >> [refresh_mv_main, refresh_mv_comparaison]
 
-    #spark_etl_cleaning >> train_lr
-    #spark_etl_cleaning >> train_rf
+    spark_etl_cleaning >> train_lr
+    spark_etl_cleaning >> train_rf
 
     # Chaînage interne des modèles
-    #train_lr >> predict_lr
-    #train_rf >> predict_rf
+    train_lr >> predict_lr
+    train_rf >> predict_rf
 
-    #predict_lr >> refresh_mv_niger
-    #predict_rf >> refresh_mv_niger
+    predict_lr >> refresh_mv_niger
+    predict_rf >> refresh_mv_niger
     
