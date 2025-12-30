@@ -4,6 +4,10 @@ import pickle
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 
+# =============================
+# Connexion PostgreSQL
+# =============================
+
 conn = psycopg2.connect(
     dbname="mydb",
     user="admin",
@@ -11,6 +15,10 @@ conn = psycopg2.connect(
     host="postgres",
     port=5432
 )
+
+# =============================
+# Chargement des données propres
+# =============================
 
 query = """
 SELECT dateyear,
@@ -25,17 +33,31 @@ WHERE datevaleur_ambs IS NOT NULL
 
 df = pd.read_sql(query, conn)
 
+# Variables explicatives (X) et cible (y)
 X = df[["dateyear", "datevaleur_ambs", "datevaleur_pcbmnt"]]
 y = df["datevaleur_iuti"]
 
+# Séparation train/test (test ignoré ici)
 X_train, _, y_train, _ = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
+# =============================
+# Entraînement Linear Regression
+# =============================
+
 model = LinearRegression()
 model.fit(X_train, y_train)
 
+# =============================
+# Sérialisation du modèle
+# =============================
+
 model_binary = pickle.dumps(model)
+
+# =============================
+# Sauvegarde en base
+# =============================
 
 cursor = conn.cursor()
 cursor.execute("""

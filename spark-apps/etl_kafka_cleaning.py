@@ -73,3 +73,5 @@ finally:
     # Stop Spark
     spark.stop()
     logger.info("✅ Pipeline Spark terminé et Spark arrêté proprement")
+
+    

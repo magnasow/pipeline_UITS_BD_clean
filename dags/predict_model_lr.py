@@ -2,6 +2,9 @@ import psycopg2
 import pandas as pd
 import pickle
 
+# =============================
+# Connexion PostgreSQL
+# =============================
 conn = psycopg2.connect(
     dbname="mydb",
     user="admin",
@@ -12,6 +15,9 @@ conn = psycopg2.connect(
 
 cursor = conn.cursor()
 
+# =============================
+# Chargement du modèle LR
+# =============================
 cursor.execute("""
 SELECT model_object
 FROM ml_models
@@ -21,11 +27,17 @@ WHERE model_name='lr_connectivity'
 
 lr_model = pickle.loads(cursor.fetchone()[0])
 
+# =============================
+# Liste des pays
+# =============================
 countries = pd.read_sql(
     "SELECT DISTINCT entite_iso FROM indicateurs_connectivite_etude",
     conn
 )
 
+# =============================
+# Prédictions
+# =============================
 for country in countries["entite_iso"]:
 
     df_last = pd.read_sql("""
@@ -38,12 +50,16 @@ for country in countries["entite_iso"]:
         LIMIT 1;
     """, conn, params=(country,))
 
+    # Sécurité supplémentaire
     if df_last.empty:
         continue
 
     ambs = df_last.loc[0, "datevaleur_ambs"]
     pcbmnt = df_last.loc[0, "datevaleur_pcbmnt"]
 
+    # =============================
+    # Prédiction 2026–2030
+    # =============================
     for year in range(2026, 2031):
         pred = lr_model.predict([[year, ambs, pcbmnt]])[0]
 
