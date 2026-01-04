@@ -15,20 +15,20 @@ conn = psycopg2.connect(
 cursor = conn.cursor()
 
 # =============================
-# Chargement du modèle LR
+# Chargement du modèle RandomForest
 # =============================
 cursor.execute("""
 SELECT model_object
 FROM ml_models
-WHERE model_name = 'lr_connectivity'
-  AND model_type = 'LinearRegression';
+WHERE model_name = 'rf_connectivity'
+  AND model_type = 'RandomForest';
 """)
 
 row = cursor.fetchone()
 if row is None:
-    raise ValueError("Modèle Linear Regression introuvable en base")
+    raise ValueError("Modèle Random Forest introuvable en base")
 
-lr_model = pickle.loads(row[0])
+rf_model = pickle.loads(row[0])
 
 # =============================
 # Liste des pays
@@ -39,10 +39,11 @@ countries = pd.read_sql(
 )
 
 # =============================
-# Prédictions
+# Prédictions 2026–2030
 # =============================
 for country in countries["entite_iso"]:
 
+    # Récupération des dernières valeurs connues
     df_last = pd.read_sql("""
         SELECT datevaleur_ambs, datevaleur_pcbmnt
         FROM indicateurs_connectivite_etude
@@ -53,7 +54,6 @@ for country in countries["entite_iso"]:
         LIMIT 1;
     """, conn, params=(country,))
 
-    # Sécurité supplémentaire
     if df_last.empty:
         print(f"[WARN] Données manquantes pour {country}, ignoré")
         continue
@@ -61,18 +61,15 @@ for country in countries["entite_iso"]:
     ambs = df_last.loc[0, "datevaleur_ambs"]
     pcbmnt = df_last.loc[0, "datevaleur_pcbmnt"]
 
-    # =============================
-    # Prédiction 2026–2030
-    # =============================
+    # Prédictions pour 2026 à 2030
     for year in range(2026, 2031):
-
         X_future = pd.DataFrame([{
             "dateyear": year,
             "datevaleur_ambs": ambs,
             "datevaleur_pcbmnt": pcbmnt
         }])
 
-        pred = float(lr_model.predict(X_future)[0])
+        pred = float(rf_model.predict(X_future)[0])
 
         cursor.execute("""
         INSERT INTO indicateurs_connectivite_predictions
@@ -83,10 +80,11 @@ for country in countries["entite_iso"]:
         DO UPDATE SET
             prediction_datevaleur_iuti = EXCLUDED.prediction_datevaleur_iuti,
             created_at = CURRENT_TIMESTAMP;
-        """, (country, year, ambs, pcbmnt, pred, "LinearRegression"))
+        """, (country, year, ambs, pcbmnt, pred, "RandomForest"))
 
+# Commit et fermeture de la connexion
 conn.commit()
 cursor.close()
 conn.close()
 
-print("[OK] Prédictions Linear Regression générées")
+print("[OK] Prédictions Random Forest 2026–2030 générées")
