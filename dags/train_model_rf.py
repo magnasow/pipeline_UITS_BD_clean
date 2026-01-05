@@ -1,8 +1,10 @@
 import psycopg2
 import pickle
 import pandas as pd
+
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
+
 
 # =============================
 # Connexion PostgreSQL
@@ -16,8 +18,9 @@ conn = psycopg2.connect(
 )
 
 # =============================
-# Chargement des données propres
+# Chargement des données propres (pour le Niger - Test)
 # =============================
+
 query = """
 SELECT dateyear,
        datevaleur_ambs,
@@ -26,29 +29,30 @@ SELECT dateyear,
 FROM indicateurs_connectivite_etude
 WHERE datevaleur_ambs IS NOT NULL
   AND datevaleur_pcbmnt IS NOT NULL
-  AND datevaleur_iuti IS NOT NULL;
-"""
-
+  AND datevaleur_iuti IS NOT NULL
+  AND entite_iso = 'NER';
+  """
 df = pd.read_sql(query, conn)
 
-# Variables explicatives (X) et cible (y)
-X = df[["dateyear", "datevaleur_ambs", "datevaleur_pcbmnt"]]
-y = df["datevaleur_iuti"]
+# =============================
+# Préparation des données
+# =============================
 
-# Séparation train/test (test ignoré ici)
-X_train, _, y_train, _ = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
+# 2. Build set like (t -> t+1)
+X = df[['datevaleur_ambs', 'datevaleur_pcbmnt', 'datevaleur_iuti']].iloc[:-1].values
+y = df[['datevaleur_ambs', 'datevaleur_pcbmnt', 'datevaleur_iuti']].iloc[1:].values
 
 # =============================
 # Entraînement Random Forest
 # =============================
-model = RandomForestRegressor(
-    n_estimators=200,
-    random_state=42,
-    n_jobs=-1
+model = MultiOutputRegressor(
+    RandomForestRegressor(
+        n_estimators=200,
+        random_state=42
+    )
 )
-model.fit(X_train, y_train)
+
+model.fit(X, y)
 
 # =============================
 # Sérialisation du modèle

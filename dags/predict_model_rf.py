@@ -1,6 +1,7 @@
 import psycopg2
 import pandas as pd
 import pickle
+import numpy as np  # <- nécessaire pour reshape
 
 # =============================
 # Connexion PostgreSQL
@@ -34,7 +35,7 @@ rf_model = pickle.loads(row[0])
 # Liste des pays
 # =============================
 countries = pd.read_sql(
-    "SELECT DISTINCT entite_iso FROM indicateurs_connectivite_etude",
+    "SELECT DISTINCT entite_iso FROM indicateurs_connectivite_etude WHERE entite_iso = 'NER';",
     conn
 )
 
@@ -43,13 +44,13 @@ countries = pd.read_sql(
 # =============================
 for country in countries["entite_iso"]:
 
-    # Récupération des dernières valeurs connues
     df_last = pd.read_sql("""
-        SELECT datevaleur_ambs, datevaleur_pcbmnt
+        SELECT datevaleur_ambs, datevaleur_pcbmnt, datevaleur_iuti
         FROM indicateurs_connectivite_etude
         WHERE entite_iso = %s
           AND datevaleur_ambs IS NOT NULL
           AND datevaleur_pcbmnt IS NOT NULL
+          AND datevaleur_iuti IS NOT NULL
         ORDER BY dateyear DESC
         LIMIT 1;
     """, conn, params=(country,))
@@ -58,18 +59,16 @@ for country in countries["entite_iso"]:
         print(f"[WARN] Données manquantes pour {country}, ignoré")
         continue
 
-    ambs = df_last.loc[0, "datevaleur_ambs"]
-    pcbmnt = df_last.loc[0, "datevaleur_pcbmnt"]
+    last_values = df_last.iloc[-1].values
 
-    # Prédictions pour 2026 à 2030
+    # reshape pour 2D
+    pred = np.array(last_values).reshape(1, -1)
+
     for year in range(2026, 2031):
-        X_future = pd.DataFrame([{
-            "dateyear": year,
-            "datevaleur_ambs": ambs,
-            "datevaleur_pcbmnt": pcbmnt
-        }])
+        pred = rf_model.predict(pred)
 
-        pred = float(rf_model.predict(X_future)[0])
+        # reshape pour insérer les valeurs si nécessaire
+        pred_to_insert = np.array(pred).reshape(-1)
 
         cursor.execute("""
         INSERT INTO indicateurs_connectivite_predictions
@@ -80,9 +79,8 @@ for country in countries["entite_iso"]:
         DO UPDATE SET
             prediction_datevaleur_iuti = EXCLUDED.prediction_datevaleur_iuti,
             created_at = CURRENT_TIMESTAMP;
-        """, (country, year, ambs, pcbmnt, pred, "RandomForest"))
+        """, (country, year, pred_to_insert[0], pred_to_insert[1], pred_to_insert[2], "RandomForest"))
 
-# Commit et fermeture de la connexion
 conn.commit()
 cursor.close()
 conn.close()

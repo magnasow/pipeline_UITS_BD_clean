@@ -1,8 +1,9 @@
 import psycopg2
 import pandas as pd
 import pickle
+
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
 
 # =============================
 # Connexion PostgreSQL
@@ -17,7 +18,7 @@ conn = psycopg2.connect(
 )
 
 # =============================
-# Chargement des données propres
+# Chargement des données propres (pour le Niger - Test)
 # =============================
 
 query = """
@@ -28,26 +29,27 @@ SELECT dateyear,
 FROM indicateurs_connectivite_etude
 WHERE datevaleur_ambs IS NOT NULL
   AND datevaleur_pcbmnt IS NOT NULL
-  AND datevaleur_iuti IS NOT NULL;
-"""
+  AND datevaleur_iuti IS NOT NULL
+  AND entite_iso = 'NER';
+  """
 
 df = pd.read_sql(query, conn)
 
-# Variables explicatives (X) et cible (y)
-X = df[["dateyear", "datevaleur_ambs", "datevaleur_pcbmnt"]]
-y = df["datevaleur_iuti"]
-
-# Séparation train/test (test ignoré ici)
-X_train, _, y_train, _ = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
-
 # =============================
-# Entraînement Linear Regression
+# Préparation des données
 # =============================
 
-model = LinearRegression()
-model.fit(X_train, y_train)
+# 2. Build set like (t -> t+1)
+X = df[['datevaleur_ambs', 'datevaleur_pcbmnt', 'datevaleur_iuti']].iloc[:-1].values
+y = df[['datevaleur_ambs', 'datevaleur_pcbmnt', 'datevaleur_iuti']].iloc[1:].values
+
+
+# =============================
+# Entraînement du MultiOutputRegressor Linear Regression
+# =============================
+# 3. Train multivariate model
+model = MultiOutputRegressor(LinearRegression())
+model.fit(X, y)
 
 # =============================
 # Sérialisation du modèle
